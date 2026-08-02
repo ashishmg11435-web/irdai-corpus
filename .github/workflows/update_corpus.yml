@@ -1,0 +1,182 @@
+# =============================================================================
+# IRDAI Corpus Updater — GitHub Actions Workflow
+# =============================================================================
+#
+# Runs the IRDAI document crawler on a schedule (daily at 02:00 UTC) and
+# commits any new/updated documents + metadata changes back to the repo.
+#
+# Can also be triggered manually via workflow_dispatch.
+#
+# Required setup:
+#   1. Push this file to .github/workflows/update_corpus.yml
+#   2. Ensure the repo has write permissions for GitHub Actions:
+#      Settings > Actions > General > Workflow permissions > Read and write
+#   3. (Optional) Set repository secrets for notifications:
+#      - SLACK_WEBHOOK_URL for Slack alerts
+#
+# =============================================================================
+
+name: Update IRDAI Corpus
+
+on:
+  # Scheduled: runs daily at 02:00 UTC (07:30 IST)
+  schedule:
+    - cron: "0 2 * * *"
+
+  # Manual trigger with configurable parameters
+  workflow_dispatch:
+    inputs:
+      max_downloads:
+        description: "Max PDFs to download in this run"
+        required: false
+        default: "50"
+      max_pages:
+        description: "Max HTML pages to crawl"
+        required: false
+        default: "200"
+      force:
+        description: "Force re-download all documents"
+        required: false
+        default: "false"
+        type: boolean
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  update-corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout the repository
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ------------------------------------------------------------------
+      # 2. Set up Python
+      # ------------------------------------------------------------------
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # ------------------------------------------------------------------
+      # 3. Install dependencies
+      # ------------------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 tqdm pymupdf pandas
+
+      # ------------------------------------------------------------------
+      # 4. Run the incremental updater
+      # ------------------------------------------------------------------
+      - name: Run IRDAI corpus update
+        run: |
+          cd irda_scraper
+
+          # Determine parameters
+          MAX_DL="${{ github.event.inputs.max_downloads || '50' }}"
+          MAX_PG="${{ github.event.inputs.max_pages || '200' }}"
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+
+          echo "=== Running IRDAI Corpus Update ==="
+          echo "Max downloads: $MAX_DL"
+          echo "Max pages: $MAX_PG"
+          echo "Force: ${{ github.event.inputs.force || 'false' }}"
+
+          python main.py --update \
+            --max-downloads "$MAX_DL" \
+            --max-pages "$MAX_PG" \
+            $FORCE_FLAG \
+            --verbose
+
+      # ------------------------------------------------------------------
+      # 5. Check if anything changed
+      # ------------------------------------------------------------------
+      - name: Check for changes
+        id: check_changes
+        run: |
+          cd irda_scraper
+          git add -A .
+          if git diff --cached --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected."
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected:"
+            git diff --cached --stat
+          fi
+
+      # ------------------------------------------------------------------
+      # 6. Commit & push changes (only if corpus was updated)
+      # ------------------------------------------------------------------
+      - name: Commit and push updates
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          cd irda_scraper
+          git config user.name "IRDAI Corpus Bot"
+          git config user.email "bot@irdai-corpus.local"
+
+          # Build a commit message with summary
+          DATE=$(date -u '+%Y-%m-%d')
+          NEW_FILES=$(git diff --cached --name-only --diff-filter=A | grep -c '.pdf$' || true)
+          MODIFIED=$(git diff --cached --name-only --diff-filter=M | grep -c '.csv$' || true)
+
+          COMMIT_MSG="chore: corpus update ${DATE}
+
+          - ${NEW_FILES} new PDF(s) downloaded
+          - Metadata and changelog updated
+          - Auto-generated by GitHub Actions"
+
+          git commit -m "$COMMIT_MSG"
+          git push
+
+      # ------------------------------------------------------------------
+      # 7. Upload artifacts (metadata + changelog for review)
+      # ------------------------------------------------------------------
+      - name: Upload corpus metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-metadata-${{ github.run_number }}
+          path: |
+            irda_scraper/metadata.csv
+            irda_scraper/changelog.csv
+          retention-days: 30
+
+      # ------------------------------------------------------------------
+      # 8. Summary output
+      # ------------------------------------------------------------------
+      - name: Print summary
+        if: always()
+        run: |
+          echo "## IRDAI Corpus Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run date | $(date -u '+%Y-%m-%d %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "| Changes detected | ${{ steps.check_changes.outputs.changed || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f irda_scraper/metadata.csv ]; then
+            TOTAL_DOCS=$(tail -n +2 irda_scraper/metadata.csv | wc -l)
+            GOLD_DOCS=$(grep -c ',gold,' irda_scraper/metadata.csv || true)
+            SILVER_DOCS=$(grep -c ',silver,' irda_scraper/metadata.csv || true)
+            echo "| Total documents | ${TOTAL_DOCS} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Gold tier | ${GOLD_DOCS} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Silver tier | ${SILVER_DOCS} |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f irda_scraper/changelog.csv ]; then
+            CHANGELOG_LINES=$(tail -n +2 irda_scraper/changelog.csv | wc -l)
+            echo "| Changelog entries | ${CHANGELOG_LINES} |" >> $GITHUB_STEP_SUMMARY
+          fi
