@@ -37,7 +37,7 @@ on:
       force:
         description: "Force re-download all documents"
         required: false
-        default: "false"
+        default: false
         type: boolean
 
 env:
