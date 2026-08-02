@@ -79,8 +79,6 @@ jobs:
       # ------------------------------------------------------------------
       - name: Run IRDAI corpus update
         run: |
-          cd irda_scraper
-
           # Determine parameters
           MAX_DL="${{ github.event.inputs.max_downloads || '50' }}"
           MAX_PG="${{ github.event.inputs.max_pages || '200' }}"
@@ -106,7 +104,6 @@ jobs:
       - name: Check for changes
         id: check_changes
         run: |
-          cd irda_scraper
           git add -A .
           if git diff --cached --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -123,7 +120,6 @@ jobs:
       - name: Commit and push updates
         if: steps.check_changes.outputs.changed == 'true'
         run: |
-          cd irda_scraper
           git config user.name "IRDAI Corpus Bot"
           git config user.email "bot@irdai-corpus.local"
 
@@ -150,8 +146,8 @@ jobs:
         with:
           name: corpus-metadata-${{ github.run_number }}
           path: |
-            irda_scraper/metadata.csv
-            irda_scraper/changelog.csv
+            metadata.csv
+            changelog.csv
           retention-days: 30
 
       # ------------------------------------------------------------------
@@ -167,16 +163,16 @@ jobs:
           echo "| Run date | $(date -u '+%Y-%m-%d %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
           echo "| Changes detected | ${{ steps.check_changes.outputs.changed || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
 
-          if [ -f irda_scraper/metadata.csv ]; then
-            TOTAL_DOCS=$(tail -n +2 irda_scraper/metadata.csv | wc -l)
-            GOLD_DOCS=$(grep -c ',gold,' irda_scraper/metadata.csv || true)
-            SILVER_DOCS=$(grep -c ',silver,' irda_scraper/metadata.csv || true)
+          if [ -f metadata.csv ]; then
+            TOTAL_DOCS=$(tail -n +2 metadata.csv | wc -l)
+            GOLD_DOCS=$(grep -c ',gold,' metadata.csv || true)
+            SILVER_DOCS=$(grep -c ',silver,' metadata.csv || true)
             echo "| Total documents | ${TOTAL_DOCS} |" >> $GITHUB_STEP_SUMMARY
             echo "| Gold tier | ${GOLD_DOCS} |" >> $GITHUB_STEP_SUMMARY
             echo "| Silver tier | ${SILVER_DOCS} |" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [ -f irda_scraper/changelog.csv ]; then
-            CHANGELOG_LINES=$(tail -n +2 irda_scraper/changelog.csv | wc -l)
+          if [ -f changelog.csv ]; then
+            CHANGELOG_LINES=$(tail -n +2 changelog.csv | wc -l)
             echo "| Changelog entries | ${CHANGELOG_LINES} |" >> $GITHUB_STEP_SUMMARY
           fi
