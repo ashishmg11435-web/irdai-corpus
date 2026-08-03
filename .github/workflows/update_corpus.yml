@@ -21,7 +21,11 @@ name: Update IRDAI Corpus
 on:
   # Scheduled: runs weekly (Sundays) at 00:00 UTC
   schedule:
+<<<<<<< HEAD
     - cron: "0 0 * * 0"
+=======
+    - cron: "0 0 * * 0"  
+>>>>>>> 4a32239e9963d1c64ba27fa0035fda40738667f1
 
   # Manual trigger with configurable parameters
   workflow_dispatch:
