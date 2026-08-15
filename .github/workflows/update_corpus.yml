@@ -149,19 +149,35 @@ jobs:
         env:
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
+          set -e  # Fail on any error
           pip install kaggle --quiet
+
+          # Debug: verify auth is set
+          echo "KAGGLE_API_TOKEN is set: $([ -n "$KAGGLE_API_TOKEN" ] && echo 'yes' || echo 'NO')"
+
+          # Also write token to file as fallback auth method
+          mkdir -p ~/.kaggle
+          echo "$KAGGLE_API_TOKEN" > ~/.kaggle/access_token
+          chmod 600 ~/.kaggle/access_token
 
           # Copy dataset metadata into the cleaned_pdfs folder
           cp dataset-metadata.json cleaned_pdfs/dataset-metadata.json
 
+          # Debug: show what we're uploading
+          echo "Files in cleaned_pdfs/:"
+          ls -la cleaned_pdfs/ | head -20
+
           # Try to update existing dataset; create if it doesn't exist yet
           echo "Pushing cleaned PDFs to Kaggle..."
-          if kaggle datasets version -p cleaned_pdfs/ -m "Corpus update $(date -u '+%Y-%m-%d')" --dir-mode zip; then
+          if kaggle datasets version -p cleaned_pdfs/ -m "Corpus update $(date -u '+%Y-%m-%d')" --dir-mode zip 2>&1; then
             echo "Kaggle dataset updated successfully."
           else
             echo "Dataset doesn't exist yet — creating..."
-            kaggle datasets create -p cleaned_pdfs/ --dir-mode zip
+            kaggle datasets create -p cleaned_pdfs/ --dir-mode zip 2>&1
           fi
+
+          echo "Done. Verifying dataset exists..."
+          kaggle datasets list --mine 2>&1 | head -10
 
       # ------------------------------------------------------------------
       # 8. Upload artifacts (metadata + changelog for review)
