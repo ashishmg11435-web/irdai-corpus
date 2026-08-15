@@ -83,20 +83,36 @@ def _derive_filename(url: str, link_text: str = "") -> str:
     return f"irdai_document_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 
 
-def _is_important(tier: str, url: str, link_text: str, timestamp: int) -> bool:
+def _is_important(tier: str, doc_type: str, url: str, link_text: str, timestamp: int) -> bool:
     """
     Determine if a document is important enough for the production RAG.
-    Gold tier documents (Regulations, Master Circulars, etc.) are always important.
-    Silver tier documents (Circulars, Orders, etc.) are only important if >= 2023.
+
+    Strategy (tiered cutoffs):
+      - Gold tier (Regulations, Master Circulars, Acts, Rules, Guidelines):
+            Always important — foundational law that stays in force until repealed.
+      - Silver tier — cutoff depends on document type:
+            Circulars, Notifications  → keep if >= 2020  (buffer for unconsolidated)
+            Orders                    → keep if >= 2023  (case-specific, only recent)
+            Exposure Drafts           → keep if >= 2024  (only current/upcoming)
+            Others (FAQ, Discussion)  → keep if >= 2023
     """
     if tier == "gold":
         return True
-    
-    # For silver tier, try to extract the year
+
+    # Determine the year cutoff based on document type
+    _CUTOFF_MAP = {
+        "Circular": 2020,
+        "Notification": 2020,
+        "Order": 2023,
+        "Exposure Draft": 2024,
+    }
+    cutoff_year = _CUTOFF_MAP.get(doc_type, 2023)
+
+    # Try to extract the year from the Liferay timestamp
     year = 0
     if timestamp > 0:
         year = datetime.fromtimestamp(timestamp).year
-    
+
     if year == 0:
         # Fallback to regex on link text and URL
         import re
@@ -104,12 +120,10 @@ def _is_important(tier: str, url: str, link_text: str, timestamp: int) -> bool:
         if match:
             year = int(match.group(0))
 
-    # If we still can't find a year, we assume it's recent/important to be safe,
-    # OR we could be strict. Given the RAG context, if we can't find a year,
-    # it's better to keep it unless we are sure it's old.
-    if year > 0 and year < 2023:
+    # If we can't determine the year, keep the document to be safe
+    if year > 0 and year < cutoff_year:
         return False
-        
+
     return True
 
 
@@ -324,10 +338,10 @@ def run_downloader(
         tier = classify_tier(doc_type)
         _, timestamp = extract_version(url)
         
-        if not _is_important(tier, url, link.get("link_text", ""), timestamp):
+        if not _is_important(tier, doc_type, url, link.get("link_text", ""), timestamp):
             skipped_invalid += 1
             print(f"  [{doc_type}] {title_preview}")
-            print(f"       -> SKIP (Silver tier document older than 2023)")
+            print(f"       -> SKIP ({doc_type}, below year cutoff for silver tier)")
             continue
 
         print(f"  [{doc_type}] {title_preview}")

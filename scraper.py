@@ -64,7 +64,9 @@ _PORTLET_CUR_KEY = f"_{_PORTLET_ID}_cur"
 # Devanagari Unicode range
 _DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 
-# URL segments that indicate non-regulatory content — skip these entirely
+# URL segments that indicate non-regulatory content — skip these entirely.
+# NOTE: These are substring matches — keep patterns specific enough to avoid
+# accidentally filtering legitimate regulatory documents.
 EXCLUDED_PATTERNS: tuple[str, ...] = (
     "recruitment",
     "career",
@@ -88,13 +90,13 @@ EXCLUDED_PATTERNS: tuple[str, ...] = (
     "/hi/",
     "languageId=hi",
     "vacancies",
-    "notices",
     "/archive",
-    "form",
-    "format",
-    "annexure",
-    "draft",
-    "discussion",
+    # "form" removed — too broad, matches "reform", "information", "performance"
+    # "format" removed — substring of legitimate words
+    # "annexure" removed — IRDAI regulation annexures contain critical content
+    # "draft" removed — contradicts the exposure-drafts seed URL
+    # "discussion" removed — blocks discussion papers (optional corpus content)
+    # "notices" removed — blocks regulatory/public notices along with recruitment
 )
 
 logger = logging.getLogger(__name__)
