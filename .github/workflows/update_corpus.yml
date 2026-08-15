@@ -148,7 +148,7 @@ jobs:
         if: steps.check_changes.outputs.pdf_count != '0'
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           pip install kaggle --quiet
 
