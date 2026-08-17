@@ -1,6 +1,6 @@
 {
-  "title": "IRDAI Regulatory Corpus - Cleaned PDFs",
-  "id": "ashishmm10/irdai-regulatory-corpus",
+  "title": "IRDAI RAG Document Corpus",
+  "id": "ashishmm10/irdai-rag-docs-corpus",
   "licenses": [
     {
       "name": "other"
