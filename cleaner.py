@@ -233,8 +233,8 @@ def clean_all(
             total_removed_blank += stats["removed_blank"]
             print(
                 f"  [OK] {pdf_file.name}: "
-                f"{stats['total_pages']} pages → {stats['kept_pages']} kept "
-                f"(−{stats['removed_hindi']} Hindi, −{stats['removed_blank']} blank)"
+                f"{stats['total_pages']} pages -> {stats['kept_pages']} kept "
+                f"(-{stats['removed_hindi']} Hindi, -{stats['removed_blank']} blank)"
             )
 
     print(
