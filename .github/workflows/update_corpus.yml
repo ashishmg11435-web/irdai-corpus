@@ -46,7 +46,7 @@ env:
 jobs:
   update-corpus:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
 
     steps:
       # ------------------------------------------------------------------
