@@ -142,37 +142,26 @@ jobs:
           git push
 
       # ------------------------------------------------------------------
-      # 7. Push cleaned PDFs to Kaggle Dataset
+      # 7. Push cleaned PDFs to Hugging Face Dataset
       # ------------------------------------------------------------------
-      - name: Push to Kaggle Dataset
+      - name: Push to Hugging Face
         if: steps.check_changes.outputs.pdf_count != '0'
         env:
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -e  # Fail on any error
-          pip install kaggle --quiet
+          pip install huggingface_hub --quiet
 
           # Debug: verify auth is set
-          echo "KAGGLE_API_TOKEN is set: $([ -n "$KAGGLE_API_TOKEN" ] && echo 'yes' || echo 'NO')"
-
-          # Also write token to file as fallback auth method
-          mkdir -p ~/.kaggle
-          echo "$KAGGLE_API_TOKEN" > ~/.kaggle/access_token
-          chmod 600 ~/.kaggle/access_token
-
-          # Copy dataset metadata into the cleaned_pdfs folder
-          cp dataset-metadata.json cleaned_pdfs/dataset-metadata.json
+          echo "HF_TOKEN is set: $([ -n "$HF_TOKEN" ] && echo 'yes' || echo 'NO')"
 
           # Debug: show what we're uploading
           echo "Files in cleaned_pdfs/:"
           ls -la cleaned_pdfs/ | head -20
 
-          # Since we are using an existing dataset, we only need to push a new version.
-          echo "Pushing cleaned PDFs to Kaggle..."
-          kaggle datasets version -p cleaned_pdfs/ -m "Corpus update $(date -u '+%Y-%m-%d')" --dir-mode zip
-
-          echo "Done. Verifying dataset exists..."
-          kaggle datasets list --mine 2>&1 | head -10
+          echo "Pushing cleaned PDFs to Hugging Face..."
+          # upload cleaned_pdfs folder to the root of the dataset
+          huggingface-cli upload Ashishmg10/irdai-corpus cleaned_pdfs/ . --repo-type dataset
 
       # ------------------------------------------------------------------
       # 8. Upload artifacts (metadata + changelog for review)
