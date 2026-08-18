@@ -161,7 +161,7 @@ jobs:
 
           echo "Pushing cleaned PDFs to Hugging Face..."
           # upload cleaned_pdfs folder to the root of the dataset
-          huggingface-cli upload Ashishmg10/irdai-corpus cleaned_pdfs/ . --repo-type dataset
+          hf upload Ashishmg10/irdai-corpus cleaned_pdfs/ . --repo-type dataset
 
       # ------------------------------------------------------------------
       # 8. Upload artifacts (metadata + changelog for review)
