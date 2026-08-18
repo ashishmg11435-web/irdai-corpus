@@ -167,14 +167,9 @@ jobs:
           echo "Files in cleaned_pdfs/:"
           ls -la cleaned_pdfs/ | head -20
 
-          # Try to update existing dataset; create if it doesn't exist yet
+          # Since we are using an existing dataset, we only need to push a new version.
           echo "Pushing cleaned PDFs to Kaggle..."
-          if kaggle datasets version -p cleaned_pdfs/ -m "Corpus update $(date -u '+%Y-%m-%d')" --dir-mode zip 2>&1; then
-            echo "Kaggle dataset updated successfully."
-          else
-            echo "Dataset doesn't exist yet — creating..."
-            kaggle datasets create -p cleaned_pdfs/ --dir-mode zip 2>&1
-          fi
+          kaggle datasets version -p cleaned_pdfs/ -m "Corpus update $(date -u '+%Y-%m-%d')" --dir-mode zip
 
           echo "Done. Verifying dataset exists..."
           kaggle datasets list --mine 2>&1 | head -10
