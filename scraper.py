@@ -99,6 +99,26 @@ EXCLUDED_PATTERNS: tuple[str, ...] = (
     # "notices" removed — blocks regulatory/public notices along with recruitment
 )
 
+# Filename keywords that indicate non-English documents.
+# These catch PDFs with English URLs/titles but non-English content
+# (e.g. "Integrity_Pledge_Hindi-.pdf" which slips past Devanagari detection).
+NON_ENGLISH_FILENAME_KEYWORDS: tuple[str, ...] = (
+    "hindi",
+    "marathi",
+    "telugu",
+    "kannada",
+    "tamil",
+    "bengali",
+    "gujarati",
+    "punjabi",
+    "malayalam",
+    "odia",
+    "urdu",
+    "assamese",
+    "_hi_",
+    "_hi.",
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -205,6 +225,13 @@ def _extract_pdf_links(soup: BeautifulSoup, source_url: str) -> list[dict]:
         # Skip Hindi-titled documents
         if _DEVANAGARI_RE.search(link_text):
             logger.debug("Skipping Hindi-titled document: %s", link_text[:60])
+            continue
+
+        # Skip non-English documents based on filename keywords
+        # (catches PDFs with English URLs but non-English content)
+        url_path_lower = urlparse(clean_url).path.lower()
+        if any(kw in url_path_lower for kw in NON_ENGLISH_FILENAME_KEYWORDS):
+            logger.debug("Skipping non-English filename: %s", clean_url[:80])
             continue
 
         # Skip empty link text that is also a re-detection of a known Hindi URL

@@ -160,8 +160,10 @@ jobs:
           ls -la cleaned_pdfs/ | head -20
 
           echo "Pushing cleaned PDFs to Hugging Face..."
-          # upload cleaned_pdfs folder to the root of the dataset
-          hf upload Ashishmg10/irdai-corpus cleaned_pdfs/ . --repo-type dataset
+          # Upload cleaned_pdfs folder to the root of the dataset.
+          # --delete "*" removes any file on HF that is NOT in cleaned_pdfs/,
+          # ensuring the dataset always mirrors exactly what the scraper produces.
+          hf upload Ashishmg10/irdai-corpus cleaned_pdfs/ . --repo-type dataset --delete "*"
 
       # ------------------------------------------------------------------
       # 8. Upload artifacts (metadata + changelog for review)
