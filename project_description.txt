@@ -1,0 +1,200 @@
+Here's a project description that accurately reflects what we're building.
+---
+
+# Project: IRDAI Compliance Document Crawler
+
+## Overview
+
+This project aims to build an **automated document collection pipeline** for an Agentic Retrieval-Augmented Generation (RAG) system focused on **IRDAI (Insurance Regulatory and Development Authority of India)** regulations.
+
+Instead of manually downloading regulatory documents, the crawler will automatically discover, download, organize, and maintain the latest IRDAI compliance documents from the official IRDAI website.
+
+The downloaded documents will later be cleaned, chunked, embedded, and indexed in a vector database for use in an Agentic RAG system that answers insurance regulatory and compliance questions.
+
+---
+
+# Objectives
+
+The crawler should:
+
+* Crawl the official IRDAI website.
+* Automatically discover pages containing regulatory documents.
+* Identify downloadable PDF documents.
+* Download only authentic IRDAI PDFs.
+* Avoid duplicate downloads.
+* Maintain metadata for every document.
+* Support incremental updates when new regulations are published.
+
+The crawler should prioritize high-value compliance documents rather than downloading every file on the website.
+
+---
+
+# Documents to Collect
+
+The crawler should prioritize collecting documents such as:
+
+* IRDAI Regulations
+* Master Circulars
+* Guidelines
+* Circulars
+* Acts
+* Exposure Drafts
+* Frequently Asked Questions (optional)
+* Discussion Papers (optional)
+
+The crawler should ignore unrelated content such as:
+
+* Recruitment notices
+* Tenders
+* Annual reports
+* Press releases
+* Speeches
+* News articles
+* Login portals
+* Consumer grievance portals
+* Administrative webpages
+
+---
+
+# Project Architecture
+
+```text
+Official IRDAI Website
+          │
+          ▼
+Homepage
+          │
+          ▼
+Focused Web Crawler
+(BFS traversal)
+          │
+          ▼
+Relevant Regulation Pages
+          │
+          ▼
+Extract PDF Links
+          │
+          ▼
+Verify PDF Content
+(Content-Type check)
+          │
+          ▼
+Download PDFs
+          │
+          ▼
+Store Metadata
+          │
+          ▼
+PDF Cleaning
+(Remove Hindi text, forms, unwanted pages)
+          │
+          ▼
+Chunking
+          │
+          ▼
+Embedding
+          │
+          ▼
+FAISS Vector Database
+          │
+          ▼
+Agentic RAG System
+```
+
+---
+
+# Technologies
+
+* Python
+* Requests
+* BeautifulSoup4
+* urllib
+* tqdm
+* pandas
+* PyMuPDF (later)
+* LangChain (later)
+* FAISS (later)
+* Sentence Transformers (later)
+
+---
+
+# Current Progress
+
+### Completed
+
+* Created project structure.
+* Configured reusable `requests.Session()` with retry support.
+* Implemented HTML fetching with BeautifulSoup.
+* Extracted hyperlinks from webpages.
+* Converted relative URLs into absolute URLs using `urljoin`.
+* Filtered non-HTML links (`javascript:`, anchors, mailto, telephone).
+* Restricted crawling to the official `irdai.gov.in` domain.
+* Implemented URL normalization to reduce duplicate URLs.
+* Removed duplicate links using Python sets.
+
+---
+
+### Next Steps
+
+1. Build a BFS-based focused crawler.
+2. Crawl only regulation-related sections.
+3. Detect PDF links.
+4. Verify PDFs using HTTP `Content-Type`.
+5. Download documents safely.
+6. Generate metadata (CSV/JSON).
+7. Remove duplicate files using hashing.
+8. Clean PDFs with PyMuPDF.
+9. Integrate with the RAG ingestion pipeline.
+
+---
+
+# Expected Folder Structure
+
+```text
+irda_scraper/
+│
+├── scraper.py          # Crawls webpages and discovers relevant links
+├── downloader.py       # Downloads verified PDF files
+├── utils.py            # Shared helper functions
+├── metadata.csv        # Information about downloaded documents
+│
+├── downloaded_pdfs/
+│
+└── cleaned_pdfs/
+```
+
+---
+
+# End Goal
+
+The final output of this project will be a **maintained, high-quality corpus of IRDAI regulatory documents** that automatically stays up to date and serves as the document ingestion layer for an **Agentic RAG system**. The RAG system will use this corpus to answer regulatory, compliance, and insurance-related queries with reliable, up-to-date information while minimizing manual effort in dataset collection and maintenance.
+
+---
+
+This crawler is intentionally designed as a modular pipeline rather than a one-off script, making it easier to maintain, extend, and explain in my thesis and technical interviews.
+
+* Some important note:
+
+Yes, it is absolutely possible to clean out Hindi text word-by-word or sentence-by-sentence, but you should not do it by modifying the PDF files themselves.
+
+Here is why, and what the correct solution is:
+
+The Problem with PDF Modification
+PDFs are not like Word documents; they don't understand "sentences" or "paragraphs." A PDF just knows to place a specific letter at a specific X/Y coordinate on the page. If you try to delete a Hindi sentence from a PDF programmatically, the English text around it will not automatically slide up to fill the gap. You would just be left with weird, empty white spaces in the middle of your document, and it can often corrupt the PDF's internal structure or reading order.
+
+The Best Solution: Clean During RAG Ingestion
+Since you are building a RAG (Retrieval-Augmented Generation) system, you don't actually need the raw PDF files to be 100% perfectly clean. You only need the text that goes into your database to be clean.
+
+The standard way to handle this is during your Data Ingestion / Chunking pipeline (the step where you read the PDF and prepare it for your vector database):
+
+Extract all text from the PDF page.
+Chunk the text into sentences or paragraphs.
+Filter the chunks: Before sending a chunk to your embedding model, check it for Hindi text.
+You can use the exact same regex we use in the scraper ([\u0900-\u097F]) to check if a sentence contains Devanagari characters.
+If a sentence/chunk contains Devanagari, simply discard that chunk and don't add it to your vector database.
+Keep the chunks that are purely English.
+Why this is better:
+
+It is incredibly easy to do in Python (just a simple if statement when processing your text).
+It safely ignores the Hindi text without destroying or corrupting the original PDF files.
+It guarantees that your LLM will only retrieve pure English context when answering questions!
