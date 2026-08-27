@@ -25,6 +25,8 @@ from utils import (
     create_session,
     extract_version,
     get_document_type,
+    has_non_english_filename_keyword,
+    is_predominantly_non_english,
     sanitize_filename,
 )
 
@@ -329,6 +331,17 @@ def run_downloader(
         # Skip already-downloaded URLs
         if url in known_urls:
             skipped_dup += 1
+            continue
+
+        # Safety net: never download non-English documents, even if a stale
+        # pdf_links list (crawled before the language fix) slips past the scraper.
+        # Bilingual "Hindi _ English" docs pass — their link_text is English and
+        # their URL has no language keyword.
+        if has_non_english_filename_keyword(urlparse(url).path) or \
+                is_predominantly_non_english(link.get("link_text", "")):
+            skipped_invalid += 1
+            preview = link.get("link_text", "")[:55] or url.split("/")[-1][:55]
+            print(f"  [skip non-English] {preview}")
             continue
 
         title_preview = link.get("link_text", "")[:55] or url.split("/")[-1][:55]

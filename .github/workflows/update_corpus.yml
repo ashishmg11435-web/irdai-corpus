@@ -2,7 +2,7 @@
 # IRDAI Corpus Updater — GitHub Actions Workflow
 # =============================================================================
 #
-# Runs the IRDAI document crawler on a schedule (daily at 02:00 UTC) and
+# Runs the IRDAI document crawler on a schedule (monthly, 1st day 00:00 UTC) and
 # commits any new/updated documents + metadata changes back to the repo.
 #
 # Can also be triggered manually via workflow_dispatch.
@@ -85,6 +85,14 @@ jobs:
           FORCE_FLAG=""
           if [ "${{ github.event.inputs.force }}" = "true" ]; then
             FORCE_FLAG="--force"
+            # A force run is a deliberate FULL REBUILD. Clear the ledger so the
+            # whole corpus is re-fetched -- the downloader skips URLs already in
+            # metadata.csv, so without this, --force alone re-downloads nothing.
+            # Also raise the cap so cleaned_pdfs/ ends up holding the FULL corpus:
+            # the mirror publish (step 7) refuses to run on a partial set.
+            echo "FORCE rebuild: clearing metadata/changelog and raising download cap."
+            rm -f metadata.csv changelog.csv pdf_links_cache.json
+            if [ "$MAX_DL" -lt 5000 ]; then MAX_DL=5000; fi
           fi
 
           echo "=== Running IRDAI Corpus Update ==="
@@ -142,28 +150,32 @@ jobs:
           git push
 
       # ------------------------------------------------------------------
-      # 7. Push cleaned PDFs to Hugging Face Dataset
+      # 7. Publish cleaned PDFs to the Hugging Face Dataset
       # ------------------------------------------------------------------
-      - name: Push to Hugging Face
+      #   * Scheduled runs (force=false) -> incremental: ADD new PDFs and DELETE
+      #       only the files metadata.csv marks superseded. Never wipes HF, so it
+      #       is safe even though the runner's cleaned_pdfs/ holds only new files.
+      #   * Force rebuilds (force=true)  -> mirror: make HF exactly match the
+      #       freshly rebuilt full corpus. Guarded: refuses to run on a partial
+      #       cleaned_pdfs/, so a half-finished crawl can never wipe the dataset.
+      - name: Publish to Hugging Face
         if: steps.check_changes.outputs.pdf_count != '0'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -e  # Fail on any error
-          pip install huggingface_hub --quiet
+          pip install "huggingface_hub>=0.20" --quiet
 
-          # Debug: verify auth is set
           echo "HF_TOKEN is set: $([ -n "$HF_TOKEN" ] && echo 'yes' || echo 'NO')"
-
-          # Debug: show what we're uploading
           echo "Files in cleaned_pdfs/:"
           ls -la cleaned_pdfs/ | head -20
 
-          echo "Pushing cleaned PDFs to Hugging Face..."
-          # Upload cleaned_pdfs folder to the root of the dataset.
-          # --delete "*" removes any file on HF that is NOT in cleaned_pdfs/,
-          # ensuring the dataset always mirrors exactly what the scraper produces.
-          hf upload Ashishmg10/irdai-corpus cleaned_pdfs/ . --repo-type dataset --delete "*"
+          MODE="incremental"
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            MODE="mirror"
+          fi
+          echo "Publishing to Hugging Face (mode=$MODE)..."
+          python publish_hf.py --mode "$MODE"
 
       # ------------------------------------------------------------------
       # 8. Upload artifacts (metadata + changelog for review)

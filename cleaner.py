@@ -38,6 +38,8 @@ except ImportError as exc:
         "Install it with:  pip install pymupdf"
     ) from exc
 
+from utils import has_non_english_filename_keyword
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -121,7 +123,18 @@ def clean_pdf(input_path: str, output_path: str) -> dict:
         "removed_blank": 0,
         "kept_pages": 0,
         "skipped": False,
+        "skipped_reason": "",
     }
+
+    # Never emit non-English documents into the cleaned corpus. The page-level
+    # Devanagari check below misses image-based / scanned Hindi files (little
+    # extractable text — e.g. "Integrity_Pledge_Hindi-.pdf"), so we also gate on
+    # the filename keyword, consistent with the scraper and downloader.
+    if has_non_english_filename_keyword(os.path.basename(input_path)):
+        logger.info("Skipping non-English document (filename keyword): %s", input_path)
+        result["skipped"] = True
+        result["skipped_reason"] = "non-English filename"
+        return result
 
     try:
         doc = fitz.open(input_path)
@@ -223,8 +236,9 @@ def clean_all(
 
         if stats["skipped"]:
             total_skipped += 1
+            reason = stats.get("skipped_reason") or "all pages removed"
             print(
-                f"  [SKIPPED — all pages removed] "
+                f"  [SKIPPED — {reason}] "
                 f"{pdf_file.name} ({stats['total_pages']} pages)"
             )
         else:

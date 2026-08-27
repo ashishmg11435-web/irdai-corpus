@@ -178,6 +178,120 @@ def extract_version(url: str) -> tuple[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# Language detection (English vs Hindi / other Indic scripts)
+# ---------------------------------------------------------------------------
+#
+# IRDAI publishes many important documents under a *bilingual* title of the form
+#     "<Hindi text> _ <English text>"
+# e.g.  "आईआरडीएआई (बीमा धोखाधड़ी निगरानी रूपरेखा) दिशानिर्देश, 2025 _ "
+#       "IRDAI (Insurance Fraud Monitoring Framework) Guidelines, 2025"
+#
+# These are genuine English documents and MUST be kept. Only titles/URLs that
+# are *predominantly* non-English (a pure-Hindi document) should be skipped.
+#
+# A second, orthogonal problem: some files have a fully English-looking name but
+# non-English *content* (e.g. "Integrity_Pledge_Hindi-.pdf", a scanned Hindi
+# pledge). Those cannot be caught by looking at the script of the title, so they
+# are caught separately via a filename keyword list.
+
+# Devanagari (Hindi / Marathi) Unicode block
+_DEVANAGARI_RE = re.compile(r"[ऀ-ॿ]")
+
+# A "real English word": a run of >= 3 ASCII letters.  Used to tell a bilingual
+# title (many English words alongside Hindi) from a pure-Hindi title (none).
+_ENGLISH_WORD_RE = re.compile(r"[A-Za-z]{3,}")
+
+# Minimum number of English words for a title containing Devanagari to still be
+# treated as bilingual (and therefore kept).
+_MIN_ENGLISH_WORDS_FOR_BILINGUAL = 2
+
+# Filename keywords that mark a document as non-English even when its URL / title
+# looks fully English (e.g. "Integrity_Pledge_Hindi-.pdf", "..._Marathi.pdf").
+# Matched as case-insensitive substrings against the URL path / filename.
+# NOTE: this is the canonical definition — scraper.py, downloader.py and
+# cleaner.py all import it so the three pipeline stages stay consistent.
+NON_ENGLISH_FILENAME_KEYWORDS: tuple[str, ...] = (
+    "hindi",
+    "marathi",
+    "telugu",
+    "kannada",
+    "tamil",
+    "bengali",
+    "gujarati",
+    "punjabi",
+    "malayalam",
+    "odia",
+    "urdu",
+    "assamese",
+    # NOTE: the short ISO code forms "_hi_" / "_hi." were deliberately removed.
+    # They collide with "HI" = Health Insurance, which appears in many legitimate
+    # IRDAI filenames (e.g. "Circular_on_HI_returns_13_9_2022.pdf" -> "_hi_"),
+    # producing false positives. Genuine Hindi files are already caught by the
+    # full "hindi" keyword and by Devanagari detection, so nothing is lost.
+)
+
+
+def contains_devanagari(text: str) -> bool:
+    """Return True if *text* contains any Devanagari (Hindi) character."""
+    return bool(_DEVANAGARI_RE.search(text or ""))
+
+
+def has_non_english_filename_keyword(path_or_name: str) -> bool:
+    """
+    Return True if a URL path or filename contains a language keyword that marks
+    it as non-English content (even when the rest of the name looks English).
+
+    This is what keeps files like "Integrity_Pledge_Hindi-.pdf" out of the
+    corpus — their title/URL is otherwise indistinguishable from English.
+    """
+    lowered = (path_or_name or "").lower()
+    return any(kw in lowered for kw in NON_ENGLISH_FILENAME_KEYWORDS)
+
+
+def is_predominantly_non_english(text: str) -> bool:
+    """
+    Return True if *text* is predominantly non-English (a pure-Hindi title) and
+    should therefore be skipped.
+
+    Decision table:
+      - No Devanagari at all                       -> False (keep; English/ASCII)
+      - Devanagari + >= 2 English words (>=3 chars) -> False (bilingual, keep)
+      - Devanagari + < 2 English words              -> True  (pure Hindi, skip)
+
+    An English-looking title (no Devanagari) is treated as acceptable here; files
+    whose *content* is Hindi but whose name is English are handled separately by
+    has_non_english_filename_keyword().
+    """
+    if not contains_devanagari(text):
+        return False
+    english_words = _ENGLISH_WORD_RE.findall(text)
+    return len(english_words) < _MIN_ENGLISH_WORDS_FOR_BILINGUAL
+
+
+def english_portion(text: str) -> str:
+    """
+    Return the English / Latin portion of a possibly-bilingual title.
+
+    Works by returning the run of Latin-script text (letters, digits, spaces and
+    common title punctuation) that contains the most English words. For a
+    bilingual "<Hindi> _ <English>" title this isolates the English half:
+
+        "आईआरडीएआई (...) दिशानिर्देश, 2025 _ IRDAI (Insurance Fraud Monitoring "
+        "Framework) Guidelines, 2025"
+            -> "IRDAI (Insurance Fraud Monitoring Framework) Guidelines, 2025"
+
+    If there is no Latin text at all, the original string is returned unchanged.
+    """
+    if not text:
+        return text
+    spans = re.findall(r"[A-Za-z0-9][A-Za-z0-9 ()\[\].,:;/&'\"‘’\-–—+]*", text)
+    if not spans:
+        return text
+    best = max(spans, key=lambda s: len(_ENGLISH_WORD_RE.findall(s)))
+    return best.strip(" -–—_/|.,:;")
+
+
+# ---------------------------------------------------------------------------
 # File helpers
 # ---------------------------------------------------------------------------
 
@@ -192,16 +306,21 @@ def compute_file_hash(filepath: str, chunk_size: int = 65536) -> str:
 
 def sanitize_filename(name: str, max_length: int = 180) -> str:
     """
-    Convert an arbitrary string into a safe filename.
+    Convert an arbitrary string into a safe, ASCII-only filename.
 
     - Strip leading/trailing whitespace
-    - Replace problematic characters with underscores
+    - Replace every character that is not an ASCII letter, digit, dash or dot
+      with an underscore.  This is deliberately ASCII-only: it guarantees that
+      Devanagari (or any non-Latin script) cannot survive into a filename, even
+      if a stray Hindi character slips through upstream extraction.
     - Collapse multiple underscores
+    - Trim stray leading/trailing separators
     - Truncate to *max_length* characters
     """
     name = name.strip()
-    name = re.sub(r"[^\w\-.]", "_", name)   # keep word chars, dash, dot
-    name = re.sub(r"_+", "_", name)          # collapse consecutive underscores
+    name = re.sub(r"[^A-Za-z0-9\-.]", "_", name)  # ASCII word chars, dash, dot only
+    name = re.sub(r"_+", "_", name)               # collapse consecutive underscores
+    name = name.strip("_")                         # trim leading/trailing underscores
     return name[:max_length]
 
 

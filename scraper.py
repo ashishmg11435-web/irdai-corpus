@@ -11,8 +11,10 @@ Strategy
        uses query params like ?..._cur=2, ..._cur=3, etc.)
 3. Perform a shallow BFS (depth ≤ 1) to follow pagination only — we do NOT
    deep-crawl the whole IRDAI website.
-4. Skip pages/documents that match *exclusion* patterns (recruitment, etc.)
-   and skip Hindi-titled/URL documents.
+4. Skip pages/documents that match *exclusion* patterns (recruitment, etc.),
+   skip *predominantly* Hindi (pure-Devanagari) documents, and skip files whose
+   name carries a non-English keyword. Bilingual "Hindi _ English" documents are
+   KEPT (their English portion is used as the title).
 
 Returns a list of PDF info dicts:
     {
@@ -24,14 +26,22 @@ Returns a list of PDF info dicts:
 """
 
 import logging
-import re
 from collections import deque
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import unquote, urljoin, urlparse, urlunparse
 
 # pyrefly: ignore [missing-import]
 from bs4 import BeautifulSoup
 
-from utils import create_session, get_document_type, is_pdf_url, normalize_url
+from utils import (
+    contains_devanagari,
+    create_session,
+    english_portion,
+    get_document_type,
+    has_non_english_filename_keyword,
+    is_pdf_url,
+    is_predominantly_non_english,
+    normalize_url,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -60,9 +70,6 @@ SEED_URLS: list[str] = [
 # Liferay portlet ID for the document media portlet (used to detect pagination)
 _PORTLET_ID = "com_irdai_document_media_IRDAIDocumentMediaPortlet"
 _PORTLET_CUR_KEY = f"_{_PORTLET_ID}_cur"
-
-# Devanagari Unicode range
-_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 
 # URL segments that indicate non-regulatory content — skip these entirely.
 # NOTE: These are substring matches — keep patterns specific enough to avoid
@@ -99,25 +106,10 @@ EXCLUDED_PATTERNS: tuple[str, ...] = (
     # "notices" removed — blocks regulatory/public notices along with recruitment
 )
 
-# Filename keywords that indicate non-English documents.
-# These catch PDFs with English URLs/titles but non-English content
-# (e.g. "Integrity_Pledge_Hindi-.pdf" which slips past Devanagari detection).
-NON_ENGLISH_FILENAME_KEYWORDS: tuple[str, ...] = (
-    "hindi",
-    "marathi",
-    "telugu",
-    "kannada",
-    "tamil",
-    "bengali",
-    "gujarati",
-    "punjabi",
-    "malayalam",
-    "odia",
-    "urdu",
-    "assamese",
-    "_hi_",
-    "_hi.",
-)
+# Filename keywords that indicate non-English documents (e.g.
+# "Integrity_Pledge_Hindi-.pdf") now live in utils.NON_ENGLISH_FILENAME_KEYWORDS
+# and are applied via utils.has_non_english_filename_keyword(), so the scraper,
+# downloader and cleaner all stay consistent.
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +135,26 @@ def _clean_pdf_url(href: str, base_url: str) -> str:
     absolute = urljoin(base_url, href)
     p = urlparse(absolute)
     return urlunparse((p.scheme, p.netloc.lower(), p.path, "", p.query, ""))
+
+
+def _decode_url_name(url: str) -> str:
+    """
+    Return the decoded, human-readable document name embedded in a Liferay PDF
+    URL. Liferay paths look like:
+
+        /documents/37343/366029/<Name>.pdf/<uuid>
+
+    where <Name> is percent-encoded (and uses '+' for spaces). We decode the
+    segment that ends in '.pdf' so the caller can language-detect on the real
+    (possibly bilingual) title even when the anchor text is empty — IRDAI renders
+    each PDF as two <a> tags, one with text and one without.
+    """
+    path = urlparse(url).path
+    segments = [seg for seg in path.split("/") if seg]
+    for seg in segments:
+        if seg.lower().endswith(".pdf"):
+            return unquote(seg).replace("+", " ")
+    return unquote(segments[-1]).replace("+", " ") if segments else ""
 
 
 def _fetch_soup(url: str, session) -> BeautifulSoup | None:
@@ -186,12 +198,23 @@ def _extract_pagination_urls(soup: BeautifulSoup, base_url: str) -> list[str]:
 
 def _extract_pdf_links(soup: BeautifulSoup, source_url: str) -> list[dict]:
     """
-    Extract all English PDF document links from the page.
+    Extract English (and bilingual Hindi+English) PDF document links from a page.
+
+    IRDAI publishes many important documents under a *bilingual* title:
+        "<Hindi> _ <English>"
+        e.g. "... दिशानिर्देश, 2025 _ IRDAI (...) Guidelines, 2025"
+    These are genuine English documents and are KEPT. Language is judged on an
+    "effective title" — the anchor text, or the decoded URL name when the anchor
+    is empty — and only *predominantly* non-English (pure-Hindi) titles/URLs are
+    skipped.
 
     Skips:
-    - Hindi-titled documents (Devanagari text in anchor text)
-    - Hindi-encoded PDF URLs (percent-encoded Devanagari in path)
-    - Documents from non-regulatory folders (e.g. footer forms)
+    - Predominantly non-English (pure-Hindi) titled documents
+    - Documents whose filename carries a non-English keyword (English-looking
+      name but non-English content, e.g. "Integrity_Pledge_Hindi-.pdf")
+
+    For bilingual titles, only the English portion is stored as link_text so the
+    downstream filename and metadata stay clean English.
     """
     pdf_links: list[dict] = []
     seen_urls: set[str] = set()
@@ -214,30 +237,36 @@ def _extract_pdf_links(soup: BeautifulSoup, source_url: str) -> list[dict]:
         if clean_url in seen_urls:
             continue
 
-        # Skip URLs with percent-encoded Devanagari (Hindi documents)
-        # Devanagari in URL-encoded form starts with %E0%A4 or %E0%A5
-        if "%E0%A4" in clean_url or "%E0%A5" in clean_url:
-            logger.debug("Skipping Hindi-URL document: %s", clean_url[:80])
-            continue
-
         link_text = tag.get_text(strip=True) or ""
 
-        # Skip Hindi-titled documents
-        if _DEVANAGARI_RE.search(link_text):
-            logger.debug("Skipping Hindi-titled document: %s", link_text[:60])
+        # Language-detection basis: prefer the anchor text; fall back to the
+        # decoded URL name (IRDAI renders each PDF as two <a> tags, one of which
+        # has empty text). This keeps bilingual "<Hindi> _ <English>" documents
+        # while still skipping pure-Hindi ones.
+        effective_title = link_text or _decode_url_name(clean_url)
+
+        # Skip predominantly non-English (pure-Hindi) documents, but KEEP
+        # bilingual titles that carry a real English half.
+        if is_predominantly_non_english(effective_title):
+            logger.debug("Skipping non-English (pure Hindi) document: %s", effective_title[:60])
             continue
 
-        # Skip non-English documents based on filename keywords
-        # (catches PDFs with English URLs but non-English content)
-        url_path_lower = urlparse(clean_url).path.lower()
-        if any(kw in url_path_lower for kw in NON_ENGLISH_FILENAME_KEYWORDS):
+        # Skip non-English documents flagged by a filename keyword — English
+        # URLs/titles but non-English content (e.g. "Integrity_Pledge_Hindi-.pdf").
+        if has_non_english_filename_keyword(urlparse(clean_url).path):
             logger.debug("Skipping non-English filename: %s", clean_url[:80])
             continue
 
-        # Skip empty link text that is also a re-detection of a known Hindi URL
-        # (IRDAI renders each PDF as two <a> tags: one with text, one without)
-        # We still allow empty link text — but track by URL
         seen_urls.add(clean_url)
+
+        # For bilingual titles (or empty anchors), store only the clean English
+        # portion so the derived filename and metadata stay English.
+        if contains_devanagari(link_text) or not link_text:
+            title_for_metadata = english_portion(effective_title)
+            if title_for_metadata.lower().endswith(".pdf"):
+                title_for_metadata = title_for_metadata[:-4].rstrip(" -_.")
+        else:
+            title_for_metadata = link_text
 
         doc_type = get_document_type(clean_url, source_page=source_url)
         if doc_type == "Unknown" and source_doc_type != "Unknown":
@@ -247,7 +276,7 @@ def _extract_pdf_links(soup: BeautifulSoup, source_url: str) -> list[dict]:
             "url": clean_url,
             "source_page": source_url,
             "doc_type": doc_type,
-            "link_text": link_text,
+            "link_text": title_for_metadata,
         })
 
     return pdf_links
