@@ -1,8 +1,12 @@
-agentic-rag-test-v5.ipynb
+agentic-rag-irdai-v5.ipynb
 implementation_plan.md
 walkthrough.md
 Preliminary_Thesis_report_2521521.pdf
-project_description
+IRDAI_scraper_project_context.md
+preprocessing_explanation.md
+PreThesis_Project_Context.md
+PROJECT_CONTEXT.md
+
 
 # Downloaded and cleaned PDFs (too large for git)
 downloaded_pdfs/
